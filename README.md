@@ -1,6 +1,11 @@
 # 单词听写 📚
 
 一个基于 Flask 的英语单词听写练习 Web 应用，支持本地运行和云端部署。
+<img width="2535" height="1339" alt="屏幕截图 2026-05-02 140637" src="https://github.com/user-attachments/assets/080a25b9-fedf-4810-9934-e4c8dd235211" />
+<img width="2540" height="1323" alt="屏幕截图 2026-05-02 140743" src="https://github.com/user-attachments/assets/e9ebdd88-f2c4-43da-8763-9fe5aefa2f2e" />
+<img width="2528" height="1331" alt="屏幕截图 2026-05-02 140737" src="https://github.com/user-attachments/assets/1ed70623-852a-41a9-85f1-6e6f3cb23d18" />
+<img width="2548" height="1335" alt="屏幕截图 2026-05-02 140729" src="https://github.com/user-attachments/assets/93035e68-819f-4510-919f-d2eb8542a9cf" />
+
 
 ## 功能特色
 
