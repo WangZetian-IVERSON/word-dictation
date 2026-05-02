@@ -1,0 +1,33 @@
+﻿# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Large data files (too big for git)
+data/ecdict.csv
+data/ecdict.db
+data/ECDICT/
+
+# Generated audio (created on demand at runtime)
+static/audio/
+
+# Uploads
+uploads/
+
+# Test & temp files
+test.pdf
+test_*.py
+test_*.txt
+check*.py
+
+# PyInstaller output
+dist/
+build/
+*.spec
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

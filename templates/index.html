@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>单词听写系统</title>
+  <link href="/static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="/static/vendor/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet" />
+  <link href="/static/css/style.css" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ═══════════════ NAV BAR ═══════════════ -->
+<nav class="app-nav">
+  <div class="app-brand"><i class="bi bi-book-half"></i> 单词听写系统</div>
+  <div class="nav-tab-group">
+    <button class="nav-tab active" data-tab="library"><i class="bi bi-list-ul"></i> 单词库</button>
+    <button class="nav-tab" data-tab="listen"><i class="bi bi-headphones"></i> 听力</button>
+    <button class="nav-tab" data-tab="dictation"><i class="bi bi-pencil-square"></i> 听写</button>
+    <button class="nav-tab" data-tab="mistakes"><i class="bi bi-journal-x"></i> 错题本</button>
+  </div>
+  <div id="dictBadge" class="api-badge" title="本地词典状态—点击管理" style="cursor:pointer" data-bs-toggle="modal" data-bs-target="#dictModal"></div>
+  <button class="theme-btn" id="themeToggle" title="切换主题"><i class="bi bi-moon-stars-fill"></i></button>
+  <a href="/logout" class="logout-btn" title="退出登录"><i class="bi bi-box-arrow-right"></i></a>
+</nav>
+
+<!-- ═══════════════ TAB: 单词库 ═══════════════ -->
+<div class="tab-pane active" id="tab-library">
+  <div class="library-layout">
+
+    <!-- LEFT: add words -->
+    <aside class="library-sidebar">
+
+      <!-- Manual input -->
+      <div class="card-box">
+        <div class="card-box-title"><i class="bi bi-keyboard"></i> 手动添加单词</div>
+        <textarea id="manualInput" rows="6"
+          placeholder="每行输入一个单词，或用逗号/空格分隔&#10;例如：apple, banana&#10;或：apple&#10;    banana"></textarea>
+        <button class="btn btn-primary w-100 mt-2" id="addWordsBtn">
+          <i class="bi bi-plus-circle"></i> 添加到单词库
+        </button>
+      </div>
+
+      <!-- PDF import -->
+      <div class="card-box mt-3">
+        <div class="card-box-title"><i class="bi bi-file-earmark-text"></i> 从文件提取单词</div>
+        <div class="upload-zone" id="pdfDropZone">
+          <i class="bi bi-cloud-upload fs-2"></i>
+          <p class="mb-1">拖放 PDF 或 Word 文件到此处</p>
+          <p class="text-muted small mb-2">支持 .pdf / .docx</p>
+          <button class="btn btn-secondary btn-sm" id="pdfPickBtn"><i class="bi bi-folder2-open"></i> 选择文件</button>
+          <input type="file" id="pdfInput" accept=".pdf,.docx" hidden />
+        </div>
+        <!-- 内嵌结果面板（取代弹窗）-->
+        <div id="pdfResultPanel" style="display:none" class="mt-2">
+          <div id="pdfStatusMsg" class="mb-2 small"></div>
+          <div id="pdfWordCheckboxes" class="pdf-check-grid"></div>
+          <div id="pdfImportActions" style="display:none; gap:8px" class="mt-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.querySelectorAll('#pdfWordCheckboxes input').forEach(i=>i.checked=true)">全选</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.querySelectorAll('#pdfWordCheckboxes input').forEach(i=>i.checked=false)">取消全选</button>
+            <button class="btn btn-sm btn-primary" onclick="_addCheckedPdfWords()"><i class="bi bi-plus-circle"></i> 添加到单词库</button>
+            <button class="btn btn-sm btn-outline-danger" onclick="_closePdfPanel()">取消</button>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- RIGHT: word list -->
+    <main class="library-main">
+      <div class="list-toolbar">
+        <span class="word-count-badge"><span id="wordCount">0</span> 个单词</span>
+        <div class="toolbar-actions">
+          <button class="btn btn-sm btn-outline-secondary" id="selectAllBtn"><i class="bi bi-check-all"></i> 全选</button>
+          <button class="btn btn-sm btn-outline-secondary" id="deselectAllBtn"><i class="bi bi-square"></i> 取消</button>
+          <button class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn"><i class="bi bi-trash"></i> 删除选中</button>
+          <button class="btn btn-sm btn-outline-danger" id="clearAllBtn"><i class="bi bi-x-circle"></i> 清空</button>
+        </div>
+      </div>
+      <div id="wordList" class="word-list-grid"></div>
+      <div id="emptyHint" class="empty-hint">
+        <i class="bi bi-collection fs-1 text-muted"></i>
+        <p class="text-muted mt-2">单词库为空，请手动添加或从PDF导入</p>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<!-- ═══════════════ TAB: 听力 ═══════════════ -->
+<div class="tab-pane" id="tab-listen">
+  <div class="listen-layout">
+
+    <!-- CENTER: word display + controls -->
+    <div class="listen-main">
+      <div class="word-display-area">
+        <div id="listenWordNum" class="word-num-badge">0 / 0</div>
+        <div id="listenWord" class="big-word">—</div>
+        <div id="listenPhonetic" class="phonetic-text"></div>
+
+        <!-- Word info toggle -->
+        <button class="btn btn-sm btn-outline-primary mt-2" id="toggleInfoBtn">
+          <i class="bi bi-info-circle"></i> 单词详情
+        </button>
+        <div id="wordInfoPanel" class="word-info-panel" style="display:none">
+          <div id="wordInfoContent" class="word-info-content">
+            <span class="text-muted small">点击「单词详情」按钮获取释义</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="playback-controls">
+        <div class="ctrl-row">
+          <button class="ctrl-btn" id="prevBtn" title="上一个单词"><i class="bi bi-skip-backward-fill"></i></button>
+          <button class="ctrl-btn ctrl-play" id="playPauseBtn" title="播放/暂停"><i class="bi bi-play-fill"></i></button>
+          <button class="ctrl-btn" id="nextBtn" title="下一个单词"><i class="bi bi-skip-forward-fill"></i></button>
+          <button class="ctrl-btn" id="stopBtn" title="停止"><i class="bi bi-stop-fill"></i></button>
+          <button class="ctrl-btn" id="replayBtn" title="重播当前"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+
+        <div class="settings-grid">
+          <!-- Speed -->
+          <div class="setting-item">
+            <label>速度 <strong id="speedVal">1.0x</strong></label>
+            <input type="range" id="speedSlider" min="0.8" max="2.0" step="0.1" value="1.0" class="form-range" />
+          </div>
+          <!-- Interval -->
+          <div class="setting-item">
+            <label>间隔 <strong id="intervalVal">3 秒</strong></label>
+            <input type="range" id="intervalSlider" min="1" max="15" step="1" value="3" class="form-range" />
+          </div>
+          <!-- Loop -->
+          <div class="setting-item">
+            <label>循环模式</label>
+            <div class="btn-group w-100" role="group">
+              <button type="button" class="btn btn-outline-primary loop-btn active" data-loop="none">不循环</button>
+              <button type="button" class="btn btn-outline-primary loop-btn" data-loop="one"><i class="bi bi-repeat-1"></i> 单词</button>
+              <button type="button" class="btn btn-outline-primary loop-btn" data-loop="all"><i class="bi bi-repeat"></i> 全部</button>
+            </div>
+          </div>
+          <!-- Voice -->
+          <div class="setting-item">
+            <label>朗读语音</label>
+            <select id="listenVoice" class="form-select form-select-sm">
+              {% for vid, vname in voices.items() %}
+              <option value="{{ vid }}"{% if vid == default_voice %} selected{% endif %}>{{ vname }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <!-- Auto show info -->
+          <div class="setting-item">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="autoShowInfo">
+              <label class="form-check-label" for="autoShowInfo">播放时自动显示详情</label>
+            </div>
+          </div>
+          <!-- Hide word toggle -->
+          <div class="setting-item">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="hideWordToggle">
+              <label class="form-check-label" for="hideWordToggle">隐藏单词（硬模式）</label>
+            </div>
+          </div>
+          <!-- Show/hide sidebar -->
+          <div class="setting-item">
+            <button class="btn btn-sm btn-outline-secondary w-100" id="toggleSidebarBtn">
+              <i class="bi bi-layout-sidebar-reverse"></i> 隐藏播放列表
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: mini word list -->
+    <div class="listen-sidebar" id="listenSidebar">
+      <div class="sidebar-title">
+        播放列表
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" title="隐藏列表"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div id="listenWordList" class="listen-word-scroll"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════ TAB: 听写 ═══════════════ -->
+<div class="tab-pane" id="tab-dictation">
+
+  <!-- ── Setup ── -->
+  <div id="dictSetup" class="dict-setup-wrap">
+    <div class="dict-setup-card">
+      <h4 class="mb-4"><i class="bi bi-pencil-square"></i> 听写练习设置</h4>
+
+      <div class="setup-row">
+        <label class="setup-label">单词范围</label>
+        <div class="btn-group" role="group">
+          <button class="btn btn-outline-primary active range-btn" data-range="all">全部单词（保持顺序）</button>
+          <button class="btn btn-outline-primary range-btn" data-range="selected">已选单词…</button>
+        </div>
+      </div>
+
+      <div class="setup-row">
+        <label class="setup-label">输入方式</label>
+        <div class="btn-group" role="group">
+          <button class="btn btn-outline-primary active method-btn" data-method="keyboard">
+            <i class="bi bi-keyboard"></i> 键盘
+          </button>
+        </div>
+      </div>
+
+      <div class="setup-row">
+        <label class="setup-label">朗读语音</label>
+        <select id="dictVoice" class="form-select" style="max-width:280px">
+          {% for vid, vname in voices.items() %}
+          <option value="{{ vid }}"{% if vid == default_voice %} selected{% endif %}>{{ vname }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="setup-row">
+        <label class="setup-label">播放间隔</label>
+        <div class="d-flex align-items-center gap-2" style="max-width:280px">
+          <input type="range" id="dictIntervalSlider" min="1" max="15" step="1" value="3" class="form-range" />
+          <strong id="dictIntervalVal" style="min-width:40px">3 秒</strong>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-lg mt-3 w-100" id="startDictBtn">
+        <i class="bi bi-play-fill"></i> 开始听写
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Active dictation ── -->
+  <div id="dictActive" class="dict-active-wrap" style="display:none">
+
+    <!-- top bar -->
+    <div class="dict-topbar">
+      <div class="dict-progress-wrap">
+        <div class="dp-bar"><div class="dp-fill" id="dictFill" style="width:0%"></div></div>
+        <span id="dictProgressTxt">0 / 0</span>
+      </div>
+      <div class="dict-score-wrap">
+        正确 <span class="score-num correct" id="scoreCorrect">0</span>
+        / 错误 <span class="score-num wrong" id="scoreWrong">0</span>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" id="dictExitBtn"><i class="bi bi-x-lg"></i> 退出</button>
+    </div>
+
+    <!-- play area -->
+    <div class="dict-play-area">
+      <button class="btn btn-primary btn-lg" id="dictPlayBtn">
+        <i class="bi bi-volume-up-fill"></i> 播放单词
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" id="dictReplayBtn">
+        <i class="bi bi-arrow-clockwise"></i> 重播
+      </button>
+    </div>
+
+    <!-- input area -->
+    <div class="dict-input-area">
+
+      <!-- Keyboard -->
+      <div class="input-panel" id="panelKeyboard">
+        <input type="text" id="dictKeyboard" class="dict-text-input"
+               placeholder="输入听到的单词…" autocomplete="off" autocorrect="off"
+               autocapitalize="off" spellcheck="false" />
+        <button class="btn btn-success btn-lg" id="submitKeyboard">
+          <i class="bi bi-check-lg"></i> 提交
+        </button>
+      </div>
+
+    <!-- Feedback -->
+    <div id="dictFeedback" class="dict-feedback" style="display:none">
+      <div id="feedbackInner"></div>
+      <button class="btn btn-primary mt-3" id="nextWordBtn">
+        下一个 <i class="bi bi-arrow-right"></i>
+      </button>
+    </div>
+
+  </div>
+
+  </div><!-- /dictActive -->
+
+  <!-- ── Result ── -->
+  <div id="dictResult" class="dict-result-wrap" style="display:none">
+    <div class="result-card">
+      <div class="result-icon" id="resultIcon">🎉</div>
+      <h3 id="resultTitle">听写完成！</h3>
+      <div class="score-circle">
+        <span id="finalPct">0%</span>
+        <small id="finalDetail"></small>
+      </div>
+      <div id="resultWordList" class="result-word-list"></div>
+      <div class="result-btns">
+        <button class="btn btn-primary" id="retryBtn"><i class="bi bi-arrow-repeat"></i> 再做一次</button>
+        <button class="btn btn-warning" id="addToMistakesBtn"><i class="bi bi-journal-plus"></i> 错题加入错题本</button>
+        <button class="btn btn-outline-secondary" id="backSetupBtn"><i class="bi bi-gear"></i> 重新设置</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /tab-dictation -->
+
+<!-- ═══════════════ TAB: 错题本 ═══════════════ -->
+<div class="tab-pane" id="tab-mistakes">
+  <div class="library-layout">
+
+    <aside class="library-sidebar">
+      <div class="card-box">
+        <div class="card-box-title"><i class="bi bi-journal-x"></i> 错题本</div>
+        <p class="text-muted small mb-3">听写错误的单词会自动记录在这里，也可手动删除。</p>
+        <button class="btn btn-primary w-100 mb-2" id="mistakeDictBtn">
+          <i class="bi bi-pencil-square"></i> 针对错题听写
+        </button>
+        <button class="btn btn-info w-100 mb-2 text-white" id="mistakeListenBtn">
+          <i class="bi bi-headphones"></i> 针对错题听力
+        </button>
+        <button class="btn btn-success w-100 mb-2" id="exportMistakePdfBtn">
+          <i class="bi bi-file-earmark-pdf"></i> 导出错题本 PDF
+        </button>
+        <hr />
+        <button class="btn btn-outline-danger w-100" id="clearMistakesBtn">
+          <i class="bi bi-trash"></i> 清空错题本
+        </button>
+      </div>
+    </aside>
+
+    <main class="library-main">
+      <div class="list-toolbar">
+        <span class="word-count-badge"><span id="mistakeCount">0</span> 个错误单词</span>
+        <div class="toolbar-actions">
+          <button class="btn btn-sm btn-outline-secondary" id="mistakeSortAlpha">
+            <i class="bi bi-sort-alpha-down"></i> A–Z
+          </button>
+          <button class="btn btn-sm btn-outline-secondary" id="mistakeSortCount">
+            <i class="bi bi-sort-numeric-down"></i> 错误次数
+          </button>
+        </div>
+      </div>
+      <div id="mistakeList" class="word-list-grid"></div>
+      <div id="mistakeEmptyHint" class="empty-hint">
+        <i class="bi bi-patch-check fs-1 text-muted"></i>
+        <p class="text-muted mt-2">错题本为空，听写时答错的单词会自动记录在这里</p>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<!-- ══════════════ PDF WORD SELECTION MODAL ══════════════ -->
+<div class="modal fade" id="pdfModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-pdf"></i> 从PDF选择单词</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+          <span>共提取 <strong id="pdfTotalCount">0</strong> 个单词</span>
+          <button class="btn btn-sm btn-outline-secondary" id="pdfSelAll">全选</button>
+          <button class="btn btn-sm btn-outline-secondary" id="pdfDesAll">取消全选</button>
+          <input type="text" id="pdfSearch" class="form-control form-control-sm" placeholder="搜索…" style="max-width:180px" />
+          <span class="ms-auto text-muted small">已选 <span id="pdfSelCount">0</span> 个</span>
+        </div>
+        <!-- Sort controls -->
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <span class="text-muted small">排序方式：</span>
+          <div class="btn-group btn-group-sm" role="group" id="pdfSortGroup">
+            <button type="button" class="btn btn-outline-primary active" data-sort="original">导入顺序</button>
+            <button type="button" class="btn btn-outline-primary" data-sort="alpha">A–Z 字母</button>
+            <button type="button" class="btn btn-outline-primary" data-sort="random">🎲 乱序</button>
+          </div>
+        </div>
+        <div id="pdfWordGrid" class="pdf-word-grid"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-primary" id="pdfAddSelected"><i class="bi bi-plus-circle"></i> 添加已选单词</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ DICT SETTINGS MODAL ══════════════ -->
+<div class="modal fade" id="dictModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-journal-bookmark-fill"></i> 本地词典 (ECDICT)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="dictStatusMsg" class="mb-3 text-muted small"><i class="bi bi-hourglass-split"></i> 检测中…</div>
+        <div class="alert alert-info small mb-3">
+          <strong>如何导入词典？</strong><br/>
+          1. 下载 <a href="https://github.com/skywind3000/ECDICT/releases" target="_blank" rel="noopener">ECDICT 发布页</a>的 <code>ecdict.7z</code>（约100MB）<br/>
+          2. 解压得到 <code>ecdict.csv</code>（约 200 MB）<br/>
+          3. 将文件放入 <code>data\</code> 文件夹<br/>
+          4. 点击下方「初始化」按钮（首次约50秒）
+        </div>
+        <div id="dictCsvStatus" class="small mb-2"></div>
+        <button class="btn btn-primary" id="dictInitBtn" disabled>
+          <i class="bi bi-database-fill-add"></i> 初始化词典数据库
+        </button>
+        <div id="dictInitProgress" class="mt-2 text-muted small" style="display:none">
+          <i class="bi bi-hourglass-split"></i> 导入中，请稍候…（首次约50秒）
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ DICT WORD SELECTION MODAL ══════════════ -->
+<div class="modal fade" id="dictWordModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-ui-checks"></i> 选择听写单词</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+          <button class="btn btn-sm btn-outline-secondary" id="dwSelAll">全选</button>
+          <button class="btn btn-sm btn-outline-secondary" id="dwDesAll">取消全选</button>
+          <input type="text" id="dwSearch" class="form-control form-control-sm" placeholder="搜索…" style="max-width:180px" />
+          <span class="ms-auto text-muted small">已选 <span id="dwSelCount">0</span> 个</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <span class="text-muted small">顺序：</span>
+          <div class="btn-group btn-group-sm" id="dwSortGroup">
+            <button type="button" class="btn btn-outline-primary active" data-sort="original">保持原样</button>
+            <button type="button" class="btn btn-outline-primary" data-sort="alpha">A–Z 字母</button>
+            <button type="button" class="btn btn-outline-primary" data-sort="random">🎲 乱序</button>
+          </div>
+        </div>
+        <div id="dwWordGrid" class="pdf-word-grid"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-primary" id="dwConfirmBtn"><i class="bi bi-play-fill"></i> 开始听写</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ TOAST ══════════════ -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="appToast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden audio element -->
+<audio id="mainAudio"></audio>
+
+<script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/app.js?v={{ _js_ver }}"></script>
+</body>
+</html>
