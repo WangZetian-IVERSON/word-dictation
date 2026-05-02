@@ -28,8 +28,8 @@ if sys.platform == 'win32':
 _APP_PASSWORD = os.environ.get('APP_PASSWORD', '20040311')
 _APP_PASSWORD_HASH = hashlib.sha256(_APP_PASSWORD.encode()).hexdigest()
 
-# DeepSeek API — 使用环境变量 DEEPSEEK_API_KEY，未设置则回落到内置密鑰
-_DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', 'sk-d5a28e7c8333417c9e3990a379c41d39')
+# DeepSeek API — 必须通过环境变量 DEEPSEEK_API_KEY 设置
+_DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
 _deepseek = _OpenAI(api_key=_DEEPSEEK_API_KEY, base_url='https://api.deepseek.com/v1')
 
 app = Flask(__name__)
