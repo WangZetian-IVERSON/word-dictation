@@ -50,6 +50,9 @@ MISTAKES_FILE = DATA_DIR / "mistakes.json"
 DICT_DB       = DATA_DIR / "ecdict.db"
 ECDICT_CSV    = DATA_DIR / "ecdict.csv"
 
+# In-memory cache for online AI word lookups (survives within one process)
+_ai_word_cache: dict = {}
+
 TTS_VOICES = {
     "en-US-AriaNeural": "Aria (美式英语·女)",
     "en-US-GuyNeural": "Guy (美式英语·男)",
@@ -290,7 +293,7 @@ def get_tts():
 
 @app.route('/api/word-info', methods=['POST'])
 def word_info():
-    """Return word details: local dict first, AI fallback only if user requests."""
+    """Return word details: local dict first, AI online lookup as cloud fallback."""
     if not _logged_in():
         return jsonify({'error': '未授权'}), 401
     data = request.get_json() or {}
@@ -298,16 +301,20 @@ def word_info():
     if not word:
         return jsonify({'error': '请提供单词'}), 400
 
-    # ── Try local ECDICT first ──
+    # ── Try local ECDICT first (local dev / has db file) ──
     if DICT_DB.exists():
         info = _lookup_local_dict(word)
         if info:
             return jsonify(info)
 
-    # ── Not found locally ──
+    # ── Fallback: online AI lookup (cloud deployment) ──
+    info = _lookup_online_ai(word)
+    if info:
+        return jsonify(info)
+
     return jsonify({
         'word': word, 'configured': False, 'source': 'not_found',
-        'message': '本地词典未找到该单词'
+        'message': '未找到该单词'
     })
 
 
@@ -504,6 +511,66 @@ def export_mistakes_pdf():
         as_attachment=True,
         download_name='错题本.pdf'
     )
+
+
+# ═══════════════════════════════════════════
+#  ONLINE AI DICTIONARY  (DeepSeek fallback)
+# ═══════════════════════════════════════════
+
+def _lookup_online_ai(word: str) -> dict | None:
+    """Use DeepSeek to look up a word when local ECDICT is unavailable.
+    Returns the same word-info dict format as _ecdict_row_to_info.
+    Results are cached in memory for the lifetime of the process.
+    """
+    key = word.lower()
+    if key in _ai_word_cache:
+        return _ai_word_cache[key]
+
+    prompt = (
+        f'请为英语单词 "{word}" 提供词典信息，严格按以下JSON格式返回，不要包含任何其他文字或代码块标记：\n'
+        '{"phonetic":"/音标/","definitions":[{"pos":"词性如n./v./adj.","def":"中文释义","example":"英文例句（可为空）"}],'
+        '"synonyms":["同义词"],"phrases":[{"phrase":"词形变化如过去式/复数","meaning":"变化说明"}]}\n'
+        '要求：最多4个释义、3个近义词、词形变化填过去式/分词/复数等，无则返回空数组。'
+    )
+    try:
+        resp = _deepseek.chat.completions.create(
+            model='deepseek-chat',
+            messages=[{'role': 'user', 'content': prompt}],
+            max_tokens=500,
+            temperature=0.1,
+        )
+        text = resp.choices[0].message.content.strip()
+        # Strip markdown code fences if present
+        text = re.sub(r'^```[a-z]*\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'```\s*$', '', text, flags=re.MULTILINE).strip()
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            return None
+        d = json.loads(m.group())
+        info = {
+            'word': word,
+            'phonetic': str(d.get('phonetic', '')).strip(),
+            'definitions': [
+                {
+                    'pos': str(item.get('pos', '')),
+                    'def': str(item.get('def', '')),
+                    'example': str(item.get('example', '')),
+                }
+                for item in (d.get('definitions') or [])[:4]
+            ],
+            'synonyms': [str(s) for s in (d.get('synonyms') or [])[:3]],
+            'phrases': [
+                {'phrase': str(p.get('phrase', '')), 'meaning': str(p.get('meaning', ''))}
+                for p in (d.get('phrases') or [])[:3]
+            ],
+            'etymology': '',
+            'source': 'ai',
+            'configured': True,
+        }
+        _ai_word_cache[key] = info
+        return info
+    except Exception:
+        return None
 
 
 # ═══════════════════════════════════════════

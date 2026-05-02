@@ -463,6 +463,8 @@ function renderWordInfoHTML(data) {
   // Source badge
   if (data.source === 'local') {
     html += '<div class="mb-1"><span class="badge bg-success" style="font-size:.7rem">📚 本地词典</span></div>';
+  } else if (data.source === 'ai') {
+    html += '<div class="mb-1"><span class="badge bg-primary" style="font-size:.7rem">🤖 AI在线查词</span></div>';
   }
   if (data.phonetic) html += `<div class="info-section"><span class="info-label">发音</span> ${esc(data.phonetic)}</div>`;
   if (data.definitions?.length) {
