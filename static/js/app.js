@@ -214,44 +214,65 @@ async function _startPdfImport(file) {
   const fd = new FormData();
   fd.append('file', file);
 
-  // 1秒后更新提示
-  const hint = setTimeout(() => {
-    status.innerHTML = '<span class="text-muted"><i class="bi bi-cpu"></i> AI 正在识别单词，请稍候…</span>';
-  }, 1000);
-
+  let jobId = null;
   try {
-    const resp = await fetch('/api/upload-pdf', {
-      method: 'POST', body: fd,
-      signal: AbortSignal.timeout(90000),
-    });
-    clearTimeout(hint);
-
+    const resp = await fetch('/api/upload-pdf', { method: 'POST', body: fd });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       status.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> ${esc(err.error || '上传失败')}</span>`;
       return;
     }
-
     const data = await resp.json();
-    const words = data.words || [];
-
-    if (words.length === 0) {
-      status.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> 未提取到英文单词，请换一个PDF试试</span>';
+    if (data.error) {
+      status.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> ${esc(data.error)}</span>`;
       return;
     }
-
-    // 渲染单词复选框列表
-    status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> 提取到 <strong>${words.length}</strong> 个单词，勾选后点击"添加到单词库"</span>`;
-    const box = document.getElementById('pdfWordCheckboxes');
-    box.innerHTML = words.map(w =>
-      `<label class="pdf-check-item"><input type="checkbox" checked value="${esc(w)}"> ${esc(w)}</label>`
-    ).join('');
-    document.getElementById('pdfImportActions').style.display = 'flex';
-
+    // docx returns words directly; pdf returns job_id
+    if (data.words) {
+      _renderPdfWords(data.words, status);
+      return;
+    }
+    jobId = data.job_id;
   } catch (e) {
-    clearTimeout(hint);
-    status.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> 失败: ${esc(e.message)}</span>`;
+    status.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> 上传失败: ${esc(e.message)}</span>`;
+    return;
   }
+
+  // Poll for job completion
+  status.innerHTML = '<span class="text-muted"><i class="bi bi-cpu"></i> AI 正在识别单词（0/?）…</span>';
+  let failed = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const r = await fetch(`/api/pdf-job/${jobId}`);
+      if (!r.ok) { failed++; if (failed >= 5) { status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> 查询任务状态失败</span>'; return; } continue; }
+      failed = 0;
+      const job = await r.json();
+      if (job.status === 'processing') {
+        const prog = job.total > 0 ? `${job.progress}/${job.total}` : '…';
+        status.innerHTML = `<span class="text-muted"><i class="bi bi-cpu"></i> AI 正在识别单词（${prog} 块）…</span>`;
+      } else if (job.status === 'done') {
+        _renderPdfWords(job.words || [], status);
+        return;
+      } else if (job.status === 'error') {
+        status.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle"></i> ${esc(job.error || '处理失败')}</span>`;
+        return;
+      }
+    } catch { failed++; if (failed >= 5) { status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> 网络错误</span>'; return; } }
+  }
+}
+
+function _renderPdfWords(words, status) {
+  if (words.length === 0) {
+    status.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> 未提取到英文单词，请换一个PDF试试</span>';
+    return;
+  }
+  status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> 提取到 <strong>${words.length}</strong> 个单词，勾选后点击"添加到单词库"</span>`;
+  const box = document.getElementById('pdfWordCheckboxes');
+  box.innerHTML = words.map(w =>
+    `<label class="pdf-check-item"><input type="checkbox" checked value="${esc(w)}"> ${esc(w)}</label>`
+  ).join('');
+  document.getElementById('pdfImportActions').style.display = 'flex';
 }
 
 function _closePdfPanel() {

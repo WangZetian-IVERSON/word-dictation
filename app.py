@@ -8,6 +8,9 @@ import base64
 import sqlite3
 import csv
 import io
+import uuid
+import threading
+import time
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 
@@ -52,6 +55,10 @@ ECDICT_CSV    = DATA_DIR / "ecdict.csv"
 
 # In-memory cache for online AI word lookups (survives within one process)
 _ai_word_cache: dict = {}
+
+# PDF background jobs: {job_id: {status, progress, total, words, error}}
+_pdf_jobs: dict = {}
+_pdf_jobs_lock = threading.Lock()
 
 TTS_VOICES = {
     "en-US-AriaNeural": "Aria (美式英语·女)",
@@ -201,70 +208,108 @@ def upload_pdf():
     else:
         return jsonify({'error': '仅支持 PDF 和 Word（.docx）格式'}), 400
 
-    # Read file bytes into memory immediately to avoid Unicode path issues on Windows
-    file_bytes = file.read()
-
-    text = ''
-    used_ai = False
-    try:
-        if file_type == 'pdf':
-            # Open from bytes stream — avoids Windows non-ASCII path problems with fitz
-            doc = fitz.open(stream=file_bytes, filetype='pdf')
-            pages_text = [page.get_text() for page in doc]
-            text = '\n'.join(pages_text)
-
-            # If no text extracted → scanned PDF, cannot process
-            if len(text.strip()) < 20:
-                doc.close()
-                return jsonify({'error': '该PDF为扫描图片版，无法直接提取文字。请使用可复制文字的电子版PDF，或手动输入单词。'}), 400
-
-            doc.close()
-
-            # Use DeepSeek to intelligently extract vocabulary words from raw text
-            # Split into chunks to handle large PDFs (no 6000-char limit)
-            CHUNK_SIZE = 12000
-            chunks = [text[i:i+CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE)]
-            ai_words_all = []
-            for chunk in chunks:
-                if not chunk.strip():
-                    continue
-                resp = _deepseek.chat.completions.create(
-                    model='deepseek-chat',
-                    messages=[{
-                        'role': 'user',
-                        'content': (
-                            '以下是从PDF中提取的原始文字，请从中找出所有英文词汇单词，'
-                            '每行输出一个单词（只要单词本身，小写，不要编号、不要中文、不要发音符号），'
-                            '去掉明显的非词汇内容（如页码、标题、语法标注等）。\n\n'
-                            + chunk
-                        )
-                    }],
-                    max_tokens=4096,
-                )
-                ai_words_all.append(resp.choices[0].message.content or '')
-            used_ai = True
-            # Merge all chunk results for regex extraction below
-            text = '\n'.join(ai_words_all)
-        else:  # docx
+    # For docx: process synchronously (fast, no AI needed)
+    if file_type == 'docx':
+        try:
+            file_bytes = file.read()
             wdoc = _docx.Document(io.BytesIO(file_bytes))
             text = '\n'.join(p.text for p in wdoc.paragraphs)
+            raw = re.findall(r'\b[a-zA-Z]{3,}\b', text)
+            seen = set(); unique = []
+            for w in raw:
+                wl = w.lower()
+                if wl not in seen and wl not in STOP_WORDS:
+                    seen.add(wl); unique.append(wl)
+            return jsonify({'words': unique, 'total': len(unique)})
+        except Exception as e:
+            return jsonify({'error': f'文件解析失败: {e}'}), 500
+
+    # For PDF: start background job immediately, return job_id
+    file_bytes = file.read()
+    job_id = str(uuid.uuid4())
+    with _pdf_jobs_lock:
+        _pdf_jobs[job_id] = {'status': 'processing', 'progress': 0, 'total': 0, 'words': [], 'error': None}
+
+    t = threading.Thread(target=_run_pdf_job, args=(job_id, file_bytes, fname), daemon=True)
+    t.start()
+    return jsonify({'job_id': job_id})
+
+
+def _run_pdf_job(job_id: str, file_bytes: bytes, fname: str):
+    """Background thread: extract text from PDF, call DeepSeek per chunk, store result."""
+    def _set(status=None, progress=None, total=None, words=None, error=None):
+        with _pdf_jobs_lock:
+            j = _pdf_jobs[job_id]
+            if status  is not None: j['status']   = status
+            if progress is not None: j['progress'] = progress
+            if total    is not None: j['total']    = total
+            if words    is not None: j['words']    = words
+            if error    is not None: j['error']    = error
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype='pdf')
+        pages_text = [page.get_text() for page in doc]
+        doc.close()
+        text = '\n'.join(pages_text)
+
+        if len(text.strip()) < 20:
+            _set(status='error', error='该PDF为扫描图片版，无法直接提取文字。请使用可复制文字的电子版PDF，或手动输入单词。')
+            return
+
+        CHUNK_SIZE = 12000
+        chunks = [c for c in [text[i:i+CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE)] if c.strip()]
+        _set(total=len(chunks), progress=0)
+
+        ai_outputs = []
+        for idx, chunk in enumerate(chunks):
+            resp = _deepseek.chat.completions.create(
+                model='deepseek-chat',
+                messages=[{
+                    'role': 'user',
+                    'content': (
+                        '以下是从PDF中提取的原始文字，请从中找出所有英文词汇单词，'
+                        '每行输出一个单词（只要单词本身，小写，不要编号、不要中文、不要发音符号），'
+                        '去掉明显的非词汇内容（如页码、标题、语法标注等）。\n\n'
+                        + chunk
+                    )
+                }],
+                max_tokens=4096,
+            )
+            ai_outputs.append(resp.choices[0].message.content or '')
+            _set(progress=idx + 1)
+
+        combined = '\n'.join(ai_outputs)
+        raw = re.findall(r'\b[a-zA-Z]{3,}\b', combined)
+        seen = set(); unique = []
+        for w in raw:
+            wl = w.lower()
+            if wl not in seen and wl not in STOP_WORDS:
+                seen.add(wl); unique.append(wl)
+
+        print(f'[pdf-job] {fname} done: {len(unique)} words from {len(chunks)} chunks', flush=True)
+        _set(status='done', words=unique)
+
+        # Clean up job after 10 minutes
+        def _cleanup():
+            time.sleep(600)
+            with _pdf_jobs_lock:
+                _pdf_jobs.pop(job_id, None)
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     except Exception as e:
-        return jsonify({'error': f'文件解析失败: {e}'}), 500
+        _set(status='error', error=f'处理失败: {e}')
 
-    # If we have substantial text, also ask DeepSeek to help filter real vocabulary words
-    print(f'[upload] file={fname} type={file_type} used_ai={used_ai} text_len={len(text)} preview={repr(text[:200])}', flush=True)
 
-    raw = re.findall(r'\b[a-zA-Z]{3,}\b', text)
-    # preserve extraction order, deduplicate, remove stop words
-    seen = set()
-    unique = []
-    for w in raw:
-        wl = w.lower()
-        if wl not in seen and wl not in STOP_WORDS:
-            seen.add(wl)
-            unique.append(wl)
-
-    return jsonify({'words': unique, 'total': len(unique)})
+@app.route('/api/pdf-job/<job_id>')
+def pdf_job_status(job_id):
+    """Poll endpoint for PDF background job status."""
+    if not _logged_in():
+        return jsonify({'error': '未授权'}), 401
+    with _pdf_jobs_lock:
+        job = _pdf_jobs.get(job_id)
+    if job is None:
+        return jsonify({'error': '任务不存在或已过期'}), 404
+    return jsonify(job)
 
 
 @app.route('/api/tts')
